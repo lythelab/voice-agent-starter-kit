@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voice Agent Transport Layer</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 760px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+
+      button {
+        padding: 0.6rem 1rem;
+        margin-right: 0.6rem;
+        cursor: pointer;
+      }
+
+      #status {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Transport Layer (Daily WebRTC)</h1>
+    <p>This page only validates transport join/leave. Audio pipeline comes next.</p>
+
+    <button id="join">Join Room</button>
+    <button id="leave" disabled>Leave Room</button>
+
+    <div id="status">Idle</div>
+
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
+    <script>
+      const status = document.getElementById("status");
+      const joinBtn = document.getElementById("join");
+      const leaveBtn = document.getElementById("leave");
+
+      let callObject = null;
+
+      function setStatus(message) {
+        status.textContent = message;
+      }
+
+      async function getToken() {
+        const response = await fetch("/api/transport/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_name: "dev-client" }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+
+        return response.json();
+      }
+
+      joinBtn.addEventListener("click", async () => {
+        try {
+          setStatus("Requesting token...");
+          const { token, room_url } = await getToken();
+
+          callObject = window.Daily.createCallObject();
+          callObject.on("joined-meeting", () => setStatus("Joined: " + room_url));
+          callObject.on("left-meeting", () => setStatus("Left room"));
+          callObject.on("error", (event) => setStatus("Error: " + JSON.stringify(event)));
+
+          setStatus("Joining room...");
+          await callObject.join({ url: room_url, token });
+
+          joinBtn.disabled = true;
+          leaveBtn.disabled = false;
+        } catch (error) {
+          setStatus("Join failed: " + error.message);
+        }
+      });
+
+      leaveBtn.addEventListener("click", async () => {
+        if (!callObject) return;
+        await callObject.leave();
+        callObject.destroy();
+        callObject = null;
+
+        joinBtn.disabled = false;
+        leaveBtn.disabled = true;
+      });
+    </script>
+  </body>
+</html>
