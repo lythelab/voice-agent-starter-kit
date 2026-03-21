@@ -1,9 +1,13 @@
 from pathlib import Path
+import sys
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+if __package__ in (None, ""):
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.config import settings
 from app.transport.daily import create_meeting_token
