@@ -1,18 +1,23 @@
 from pathlib import Path
 import sys
+import base64
+import json
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 if __package__ in (None, ""):
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.config import settings
+from app.pipeline import AudioPipelineService
 from app.transport.daily import create_meeting_token
 
 app = FastAPI(title="Voice Agent Transport Layer")
+pipeline_service = AudioPipelineService()
 
 static_dir = Path(__file__).resolve().parents[1] / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -37,3 +42,42 @@ async def transport_token(payload: TokenRequest) -> dict[str, str]:
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(static_dir / "index.html")
+
+
+@app.websocket("/ws/audio-pipeline")
+async def audio_pipeline(websocket: WebSocket) -> None:
+    await websocket.accept()
+    await websocket.send_text(json.dumps({"type": "ready"}))
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            payload = json.loads(data)
+            message_type = payload.get("type")
+
+            if message_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+                continue
+
+            if message_type != "user_audio":
+                await websocket.send_text(
+                    json.dumps({"type": "error", "error": f"Unsupported message type: {message_type}"})
+                )
+                continue
+
+            audio_b64 = payload.get("audio_b64", "")
+            mime_type = payload.get("mime_type", "audio/webm")
+            if not audio_b64:
+                await websocket.send_text(json.dumps({"type": "error", "error": "Missing audio payload"}))
+                continue
+
+            await websocket.send_text(json.dumps({"type": "processing"}))
+
+            try:
+                audio_bytes = base64.b64decode(audio_b64)
+                result = await pipeline_service.process_audio(audio_bytes, mime_type)
+                await websocket.send_text(json.dumps(result))
+            except Exception as exc:  # noqa: BLE001
+                await websocket.send_text(json.dumps({"type": "error", "error": str(exc)}))
+    except WebSocketDisconnect:
+        return

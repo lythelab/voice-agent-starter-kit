@@ -29,10 +29,12 @@
   </head>
   <body>
     <h1>Transport Layer (Daily WebRTC)</h1>
-    <p>This page only validates transport join/leave. Audio pipeline comes next.</p>
+    <p>Transport + audio pipeline demo (mic → ASR → LLM → TTS).</p>
 
     <button id="join">Join Room</button>
     <button id="leave" disabled>Leave Room</button>
+    <button id="startMic">Start Mic</button>
+    <button id="stopMic" disabled>Stop Mic + Send</button>
 
     <div id="status">Idle</div>
 
@@ -41,11 +43,62 @@
       const status = document.getElementById("status");
       const joinBtn = document.getElementById("join");
       const leaveBtn = document.getElementById("leave");
+      const startMicBtn = document.getElementById("startMic");
+      const stopMicBtn = document.getElementById("stopMic");
 
       let callObject = null;
+      let ws = null;
+      let mediaRecorder = null;
+      let micChunks = [];
 
       function setStatus(message) {
         status.textContent = message;
+      }
+
+      function connectPipelineSocket() {
+        if (ws && ws.readyState === WebSocket.OPEN) return;
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        ws = new WebSocket(`${protocol}://${location.host}/ws/audio-pipeline`);
+
+        ws.onopen = () => setStatus("Audio pipeline connected");
+        ws.onclose = () => setStatus("Audio pipeline disconnected");
+        ws.onerror = () => setStatus("Audio pipeline socket error");
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === "ready") {
+              setStatus("Pipeline ready");
+              return;
+            }
+            if (data.type === "processing") {
+              setStatus("Processing audio...");
+              return;
+            }
+            if (data.type === "pipeline_result") {
+              let msg = `Transcript: ${data.transcript}\nAssistant: ${data.assistant_text}`;
+              setStatus(msg);
+
+              if (data.assistant_audio_b64 && data.assistant_audio_mime) {
+                const binary = atob(data.assistant_audio_b64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                  bytes[i] = binary.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: data.assistant_audio_mime });
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+                audio.play().finally(() => URL.revokeObjectURL(url));
+              }
+              return;
+            }
+            if (data.type === "error") {
+              setStatus("Pipeline error: " + data.error);
+            }
+          } catch (error) {
+            setStatus("Invalid pipeline message: " + error.message);
+          }
+        };
       }
 
       async function getToken() {
@@ -64,6 +117,7 @@
 
       joinBtn.addEventListener("click", async () => {
         try {
+          connectPipelineSocket();
           setStatus("Requesting token...");
           const { token, room_url } = await getToken();
 
@@ -90,6 +144,60 @@
 
         joinBtn.disabled = false;
         leaveBtn.disabled = true;
+      });
+
+      startMicBtn.addEventListener("click", async () => {
+        try {
+          connectPipelineSocket();
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          micChunks = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+              micChunks.push(event.data);
+            }
+          };
+
+          mediaRecorder.onstop = async () => {
+            const blob = new Blob(micChunks, { type: "audio/webm" });
+            const buffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            const audio_b64 = btoa(binary);
+
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+              setStatus("Socket not connected");
+              return;
+            }
+
+            ws.send(JSON.stringify({
+              type: "user_audio",
+              mime_type: "audio/webm",
+              audio_b64,
+            }));
+            setStatus("Audio sent to pipeline");
+
+            stream.getTracks().forEach((track) => track.stop());
+          };
+
+          mediaRecorder.start(250);
+          startMicBtn.disabled = true;
+          stopMicBtn.disabled = false;
+          setStatus("Recording... click 'Stop Mic + Send'");
+        } catch (error) {
+          setStatus("Mic error: " + error.message);
+        }
+      });
+
+      stopMicBtn.addEventListener("click", () => {
+        if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+        mediaRecorder.stop();
+        startMicBtn.disabled = false;
+        stopMicBtn.disabled = true;
       });
     </script>
   </body>
