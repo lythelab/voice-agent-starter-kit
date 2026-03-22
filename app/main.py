@@ -2,8 +2,9 @@ from pathlib import Path
 import sys
 import base64
 import json
+from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import WebSocket, WebSocketDisconnect
@@ -14,6 +15,7 @@ if __package__ in (None, ""):
 
 from app.config import settings
 from app.pipeline import AudioPipelineService
+from app.telemetry import latency_store
 from app.transport.daily import create_meeting_token
 
 app = FastAPI(title="Voice Agent Transport Layer")
@@ -27,9 +29,26 @@ class TokenRequest(BaseModel):
     user_name: str | None = None
 
 
+@app.middleware("http")
+async def http_latency_middleware(request: Request, call_next):
+    start = perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (perf_counter() - start) * 1000
+
+    metric_name = f"http_{request.method}_{request.url.path}"
+    latency_store.add(metric_name, elapsed_ms)
+    response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.2f}"
+    return response
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/latency/summary")
+async def latency_summary() -> dict:
+    return {"metrics": latency_store.summary()}
 
 
 @app.post("/api/transport/token")
