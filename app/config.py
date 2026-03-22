@@ -17,9 +17,14 @@ class Settings:
         "SYSTEM_PROMPT",
         "You are a concise, helpful real-time voice assistant.",
     )
-    elevenlabs_api_key: str = os.getenv("ELEVENLABS_API_KEY", "")
-    elevenlabs_voice_id: str = os.getenv("ELEVENLABS_VOICE_ID", "")
-    elevenlabs_model: str = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+    sonic3_api_key: str = os.getenv("SONIC3_API_KEY", "")
+    sonic3_base_url: str = os.getenv("SONIC3_BASE_URL", "https://api.smallest.ai/waves/v1")
+    sonic3_model: str = os.getenv("SONIC3_MODEL", "lightning-v3.1")
+    sonic3_voice_id: str = os.getenv("SONIC3_VOICE_ID", "magnus")
+    sonic3_sample_rate: int = int(os.getenv("SONIC3_SAMPLE_RATE", "24000"))
+    sonic3_speed: float = float(os.getenv("SONIC3_SPEED", "1.0"))
+    sonic3_language: str = os.getenv("SONIC3_LANGUAGE", "en")
+    sonic3_output_format: str = os.getenv("SONIC3_OUTPUT_FORMAT", "wav")
 
 
 settings = Settings()

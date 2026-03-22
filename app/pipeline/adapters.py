@@ -102,34 +102,39 @@ class TTSAdapter:
     async def synthesize(self, text: str) -> tuple[str, str] | None:
         if not text:
             return None
-        if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
-            return await self._elevenlabs_synthesize(text)
+        if settings.sonic3_api_key and settings.sonic3_voice_id:
+            return await self._sonic3_synthesize(text)
         return None
 
-    async def _elevenlabs_synthesize(self, text: str) -> tuple[str, str]:
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}"
+    async def _sonic3_synthesize(self, text: str) -> tuple[str, str]:
+        url = f"{settings.sonic3_base_url}/{settings.sonic3_model}/get_speech"
         headers = {
-            "xi-api-key": settings.elevenlabs_api_key,
+            "Authorization": f"Bearer {settings.sonic3_api_key}",
             "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
         }
         payload = {
             "text": text,
-            "model_id": settings.elevenlabs_model,
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.75,
-            },
+            "voice_id": settings.sonic3_voice_id,
+            "sample_rate": settings.sonic3_sample_rate,
+            "speed": settings.sonic3_speed,
+            "language": settings.sonic3_language,
+            "output_format": settings.sonic3_output_format,
         }
 
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(url, headers=headers, json=payload)
 
         if response.status_code >= 400:
-            raise RuntimeError(f"ElevenLabs error: {response.text}")
+            raise RuntimeError(f"Sonic-3 error: {response.text}")
 
         audio_b64 = base64.b64encode(response.content).decode("utf-8")
-        return audio_b64, "audio/mpeg"
+        output_mime = {
+            "wav": "audio/wav",
+            "mp3": "audio/mpeg",
+            "pcm": "audio/L16",
+            "mulaw": "audio/basic",
+        }.get(settings.sonic3_output_format.lower(), "audio/wav")
+        return audio_b64, output_mime
 
 
 def safe_json(data: dict) -> str:
