@@ -50,9 +50,126 @@
       let ws = null;
       let mediaRecorder = null;
       let micChunks = [];
+      let activeMicStream = null;
+
+      let currentAssistantAudio = null;
+      let currentAssistantAudioUrl = null;
+
+      let vadAudioContext = null;
+      let vadSourceNode = null;
+      let vadAnalyserNode = null;
+      let vadIntervalId = null;
+      let maxRecordTimeoutId = null;
+      let vadLastSpeechAt = 0;
+      let vadDetectedSpeech = false;
+
+      const VAD_POLL_MS = 100;
+      const VAD_SILENCE_MS = 900;
+      const VAD_MAX_RECORDING_MS = 15000;
+      const VAD_RMS_THRESHOLD = 0.02;
 
       function setStatus(message) {
         status.textContent = message;
+      }
+
+      function stopAssistantPlayback() {
+        if (currentAssistantAudio) {
+          currentAssistantAudio.pause();
+          currentAssistantAudio.currentTime = 0;
+          currentAssistantAudio = null;
+        }
+        if (currentAssistantAudioUrl) {
+          URL.revokeObjectURL(currentAssistantAudioUrl);
+          currentAssistantAudioUrl = null;
+        }
+        if (window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+      }
+
+      function speakInBrowser(text) {
+        if (!text || !window.speechSynthesis) return;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        window.speechSynthesis.speak(utterance);
+      }
+
+      function stopVadMonitoring() {
+        if (vadIntervalId) {
+          clearInterval(vadIntervalId);
+          vadIntervalId = null;
+        }
+        if (maxRecordTimeoutId) {
+          clearTimeout(maxRecordTimeoutId);
+          maxRecordTimeoutId = null;
+        }
+        if (vadSourceNode) {
+          vadSourceNode.disconnect();
+          vadSourceNode = null;
+        }
+        if (vadAnalyserNode) {
+          vadAnalyserNode.disconnect();
+          vadAnalyserNode = null;
+        }
+        if (vadAudioContext) {
+          vadAudioContext.close().catch(() => {});
+          vadAudioContext = null;
+        }
+      }
+
+      function stopMicStream() {
+        if (!activeMicStream) return;
+        activeMicStream.getTracks().forEach((track) => track.stop());
+        activeMicStream = null;
+      }
+
+      function stopRecording(sendAudio = true, reason = "manual") {
+        if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+        mediaRecorder._shouldSendAudio = sendAudio;
+        mediaRecorder._stopReason = reason;
+        mediaRecorder.stop();
+      }
+
+      function startVadMonitoring(stream) {
+        vadAudioContext = new AudioContext();
+        vadSourceNode = vadAudioContext.createMediaStreamSource(stream);
+        vadAnalyserNode = vadAudioContext.createAnalyser();
+        vadAnalyserNode.fftSize = 2048;
+        vadSourceNode.connect(vadAnalyserNode);
+
+        const samples = new Float32Array(vadAnalyserNode.fftSize);
+        vadLastSpeechAt = Date.now();
+        vadDetectedSpeech = false;
+
+        vadIntervalId = setInterval(() => {
+          if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+
+          vadAnalyserNode.getFloatTimeDomainData(samples);
+
+          let sum = 0;
+          for (let i = 0; i < samples.length; i++) {
+            sum += samples[i] * samples[i];
+          }
+          const rms = Math.sqrt(sum / samples.length);
+
+          if (rms >= VAD_RMS_THRESHOLD) {
+            vadDetectedSpeech = true;
+            vadLastSpeechAt = Date.now();
+            return;
+          }
+
+          if (vadDetectedSpeech && Date.now() - vadLastSpeechAt >= VAD_SILENCE_MS) {
+            setStatus("VAD: silence detected, sending audio...");
+            stopRecording(true, "vad_silence");
+          }
+        }, VAD_POLL_MS);
+
+        maxRecordTimeoutId = setTimeout(() => {
+          if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+          setStatus("VAD: max utterance reached, sending audio...");
+          stopRecording(true, "max_duration");
+        }, VAD_MAX_RECORDING_MS);
       }
 
       function connectPipelineSocket() {
@@ -76,7 +193,7 @@
               return;
             }
             if (data.type === "pipeline_result") {
-              let msg = `Transcript: ${data.transcript}\nAssistant: ${data.assistant_text}`;
+              const msg = `Transcript: ${data.transcript}\nAssistant: ${data.assistant_text}`;
               setStatus(msg);
 
               if (data.assistant_audio_b64 && data.assistant_audio_mime) {
@@ -86,9 +203,23 @@
                   bytes[i] = binary.charCodeAt(i);
                 }
                 const blob = new Blob([bytes], { type: data.assistant_audio_mime });
-                const url = URL.createObjectURL(blob);
-                const audio = new Audio(url);
-                audio.play().finally(() => URL.revokeObjectURL(url));
+
+                stopAssistantPlayback();
+                currentAssistantAudioUrl = URL.createObjectURL(blob);
+                currentAssistantAudio = new Audio(currentAssistantAudioUrl);
+                currentAssistantAudio.onended = () => {
+                  if (currentAssistantAudioUrl) {
+                    URL.revokeObjectURL(currentAssistantAudioUrl);
+                    currentAssistantAudioUrl = null;
+                  }
+                  currentAssistantAudio = null;
+                };
+                currentAssistantAudio.play().catch((error) => {
+                  setStatus("Playback error: " + error.message);
+                });
+              } else {
+                stopAssistantPlayback();
+                speakInBrowser(data.assistant_text);
               }
               return;
             }
@@ -149,8 +280,14 @@
       startMicBtn.addEventListener("click", async () => {
         try {
           connectPipelineSocket();
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+
+          stopAssistantPlayback();
+          setStatus("Barge-in: assistant interrupted. Listening...");
+
+          activeMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(activeMicStream, { mimeType: "audio/webm" });
+          mediaRecorder._shouldSendAudio = true;
+          mediaRecorder._stopReason = "manual";
           micChunks = [];
 
           mediaRecorder.ondataavailable = (event) => {
@@ -160,6 +297,20 @@
           };
 
           mediaRecorder.onstop = async () => {
+            stopVadMonitoring();
+
+            const shouldSend = mediaRecorder?._shouldSendAudio !== false;
+            const stopReason = mediaRecorder?._stopReason || "manual";
+
+            startMicBtn.disabled = false;
+            stopMicBtn.disabled = true;
+
+            if (!shouldSend || micChunks.length === 0) {
+              stopMicStream();
+              setStatus("Recording stopped");
+              return;
+            }
+
             const blob = new Blob(micChunks, { type: "audio/webm" });
             const buffer = await blob.arrayBuffer();
             const bytes = new Uint8Array(buffer);
@@ -170,34 +321,45 @@
             const audio_b64 = btoa(binary);
 
             if (!ws || ws.readyState !== WebSocket.OPEN) {
+              stopMicStream();
               setStatus("Socket not connected");
               return;
             }
 
-            ws.send(JSON.stringify({
-              type: "user_audio",
-              mime_type: "audio/webm",
-              audio_b64,
-            }));
-            setStatus("Audio sent to pipeline");
+            ws.send(
+              JSON.stringify({
+                type: "user_audio",
+                mime_type: "audio/webm",
+                audio_b64,
+              })
+            );
 
-            stream.getTracks().forEach((track) => track.stop());
+            setStatus(
+              stopReason === "manual"
+                ? "Audio sent to pipeline"
+                : `Audio sent to pipeline (${stopReason})`
+            );
+
+            stopMicStream();
           };
 
           mediaRecorder.start(250);
+          startVadMonitoring(activeMicStream);
+
           startMicBtn.disabled = true;
           stopMicBtn.disabled = false;
-          setStatus("Recording... click 'Stop Mic + Send'");
+          setStatus("Recording... VAD active (auto-stop on silence)");
         } catch (error) {
+          stopVadMonitoring();
+          stopMicStream();
+          startMicBtn.disabled = false;
+          stopMicBtn.disabled = true;
           setStatus("Mic error: " + error.message);
         }
       });
 
       stopMicBtn.addEventListener("click", () => {
-        if (!mediaRecorder || mediaRecorder.state === "inactive") return;
-        mediaRecorder.stop();
-        startMicBtn.disabled = false;
-        stopMicBtn.disabled = true;
+        stopRecording(true, "manual");
       });
     </script>
   </body>
