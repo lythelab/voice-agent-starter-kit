@@ -102,38 +102,55 @@ class TTSAdapter:
     async def synthesize(self, text: str) -> tuple[str, str] | None:
         if not text:
             return None
-        if settings.sonic3_api_key and settings.sonic3_voice_id:
-            return await self._sonic3_synthesize(text)
+        if settings.cartesia_api_key and settings.cartesia_voice_id:
+            return await self._cartesia_synthesize(text)
         return None
 
-    async def _sonic3_synthesize(self, text: str) -> tuple[str, str]:
-        url = f"{settings.sonic3_base_url}/{settings.sonic3_model}/get_speech"
+    async def _cartesia_synthesize(self, text: str) -> tuple[str, str]:
+        url = f"{settings.cartesia_base_url}/tts/bytes"
         headers = {
-            "Authorization": f"Bearer {settings.sonic3_api_key}",
+            "Authorization": f"Bearer {settings.cartesia_api_key}",
+            "Cartesia-Version": settings.cartesia_version,
             "Content-Type": "application/json",
         }
+
+        output_format = settings.cartesia_output_format.lower()
+        if output_format == "mp3":
+            output_format_payload = {
+                "container": "mp3",
+                "sample_rate": settings.cartesia_sample_rate,
+                "bit_rate": 128000,
+            }
+            output_mime = "audio/mpeg"
+        else:
+            output_format_payload = {
+                "container": "wav",
+                "encoding": "pcm_f32le",
+                "sample_rate": settings.cartesia_sample_rate,
+            }
+            output_mime = "audio/wav"
+
         payload = {
-            "text": text,
-            "voice_id": settings.sonic3_voice_id,
-            "sample_rate": settings.sonic3_sample_rate,
-            "speed": settings.sonic3_speed,
-            "language": settings.sonic3_language,
-            "output_format": settings.sonic3_output_format,
+            "model_id": settings.cartesia_model_id,
+            "transcript": text,
+            "voice": {
+                "mode": "id",
+                "id": settings.cartesia_voice_id,
+            },
+            "output_format": output_format_payload,
+            "language": settings.cartesia_language,
+            "generation_config": {
+                "speed": settings.cartesia_speed,
+            },
         }
 
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(url, headers=headers, json=payload)
 
         if response.status_code >= 400:
-            raise RuntimeError(f"Sonic-3 error: {response.text}")
+            raise RuntimeError(f"Cartesia error: {response.text}")
 
         audio_b64 = base64.b64encode(response.content).decode("utf-8")
-        output_mime = {
-            "wav": "audio/wav",
-            "mp3": "audio/mpeg",
-            "pcm": "audio/L16",
-            "mulaw": "audio/basic",
-        }.get(settings.sonic3_output_format.lower(), "audio/wav")
         return audio_b64, output_mime
 
 
