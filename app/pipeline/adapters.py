@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import wave
+from typing import AsyncIterator
 
 import httpx
 
@@ -61,14 +63,68 @@ class ASRAdapter:
 
 
 class LLMAdapter:
-    async def generate_reply(self, user_text: str) -> str:
+    async def stream_reply_tokens(self, user_text: str) -> AsyncIterator[str]:
         if settings.groq_api_key:
-            return await self._groq_reply(user_text)
+            async for token in self._groq_stream_reply_tokens(user_text):
+                yield token
+            return
 
-        return (
+        fallback = (
             "I heard you. This is a fallback response because GROQ_API_KEY is not configured. "
             f"You said: {user_text}"
         )
+        for match in re.finditer(r"\S+\s*", fallback):
+            yield match.group(0)
+
+    async def generate_reply(self, user_text: str) -> str:
+        parts: list[str] = []
+        async for token in self.stream_reply_tokens(user_text):
+            parts.append(token)
+        return "".join(parts).strip()
+
+    async def _groq_stream_reply_tokens(self, user_text: str) -> AsyncIterator[str]:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.groq_api_key}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "model": settings.groq_model,
+            "messages": [
+                {"role": "system", "content": settings.system_prompt},
+                {"role": "user", "content": user_text},
+            ],
+            "temperature": 0.2,
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            async with client.stream("POST", url, headers=headers, json=body) as response:
+                if response.status_code >= 400:
+                    raise RuntimeError(f"Groq error: {await response.aread()}")
+
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+
+                    try:
+                        payload = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choices = payload.get("choices", [])
+                    if not choices:
+                        continue
+
+                    token = choices[0].get("delta", {}).get("content")
+                    if token:
+                        yield token
 
     async def _groq_reply(self, user_text: str) -> str:
         url = "https://api.groq.com/openai/v1/chat/completions"

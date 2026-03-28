@@ -94,8 +94,8 @@ async def audio_pipeline(websocket: WebSocket) -> None:
 
             try:
                 audio_bytes = base64.b64decode(audio_b64)
-                result = await pipeline_service.process_audio(audio_bytes, mime_type)
-                await websocket.send_text(json.dumps(result))
+                async for event in pipeline_service.process_audio_stream(audio_bytes, mime_type):
+                    await websocket.send_text(json.dumps(event))
             except Exception as exc:  # noqa: BLE001
                 await websocket.send_text(json.dumps({"type": "error", "error": str(exc)}))
     except WebSocketDisconnect:
