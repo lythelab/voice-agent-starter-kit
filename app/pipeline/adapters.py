@@ -9,6 +9,17 @@ import httpx
 
 from app.config import settings
 
+# Persistent HTTP client — reuses TCP+TLS connections across requests.
+# Eliminates ~500-1500ms of TLS handshake overhead per API call.
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=30.0)
+    return _http_client
+
 
 def pcm16le_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1) -> bytes:
     buffer = io.BytesIO()
@@ -41,8 +52,8 @@ class ASRAdapter:
             "Content-Type": content_type,
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers, content=payload)
+        client = _get_client()
+        response = await client.post(url, headers=headers, content=payload)
 
         if response.status_code >= 400:
             raise RuntimeError(f"Deepgram error: {response.text}")
@@ -61,16 +72,17 @@ class ASRAdapter:
 
 
 class LLMAdapter:
-    async def generate_reply(self, user_text: str) -> str:
+    async def generate_reply(self, messages: list[dict[str, str]]) -> str:
         if settings.groq_api_key:
-            return await self._groq_reply(user_text)
+            return await self._groq_reply(messages)
 
+        last_user_text = messages[-1].get("content", "") if messages else ""
         return (
             "I heard you. This is a fallback response because GROQ_API_KEY is not configured. "
-            f"You said: {user_text}"
+            f"You said: {last_user_text}"
         )
 
-    async def _groq_reply(self, user_text: str) -> str:
+    async def _groq_reply(self, messages: list[dict[str, str]]) -> str:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {settings.groq_api_key}",
@@ -78,15 +90,13 @@ class LLMAdapter:
         }
         body = {
             "model": settings.groq_model,
-            "messages": [
-                {"role": "system", "content": settings.system_prompt},
-                {"role": "user", "content": user_text},
-            ],
+            "messages": messages,
             "temperature": 0.2,
+            "max_tokens": 150,
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers, json=body)
+        client = _get_client()
+        response = await client.post(url, headers=headers, json=body)
 
         if response.status_code >= 400:
             raise RuntimeError(f"Groq error: {response.text}")
@@ -144,8 +154,8 @@ class TTSAdapter:
             },
         }
 
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        client = _get_client()
+        response = await client.post(url, headers=headers, json=payload, timeout=45.0)
 
         if response.status_code >= 400:
             raise RuntimeError(f"Cartesia error: {response.text}")

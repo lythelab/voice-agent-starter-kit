@@ -3,6 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 
 from app.pipeline.adapters import ASRAdapter, LLMAdapter, TTSAdapter
+from app.pipeline.conversation import ConversationManager
 from app.telemetry import latency_store
 
 
@@ -11,6 +12,7 @@ class AudioPipelineService:
         self.asr = ASRAdapter()
         self.llm = LLMAdapter()
         self.tts = TTSAdapter()
+        self.conversation = ConversationManager()
 
     async def process_audio(self, audio_bytes: bytes, mime_type: str) -> dict:
         total_start = perf_counter()
@@ -21,9 +23,13 @@ class AudioPipelineService:
         if not transcript:
             transcript = "I could not detect speech. Please try again."
 
+        self.conversation.add_user_message(transcript)
+
         llm_start = perf_counter()
-        assistant_text = await self.llm.generate_reply(transcript)
+        assistant_text = await self.llm.generate_reply(self.conversation.get_messages())
         llm_ms = (perf_counter() - llm_start) * 1000
+
+        self.conversation.add_assistant_message(assistant_text)
 
         tts_start = perf_counter()
         tts_result = await self.tts.synthesize(assistant_text)
