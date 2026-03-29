@@ -126,6 +126,7 @@ class AudioPipelineService:
             "transcript": transcript,
             "assistant_text": assistant_text,
             "audio_chunk_count": chunk_index,
+            "assistant_audio_streamed": chunk_index > 0,
             "latency_ms": {
                 "asr": round(asr_ms, 2),
                 "llm": round(llm_ms, 2),
