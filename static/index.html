@@ -53,8 +53,12 @@
       let activeMicStream = null;
       let lastAudioSentAt = 0;
 
+      let assistantAudioQueue = [];
+      let assistantAudioPlaying = false;
       let currentAssistantAudio = null;
       let currentAssistantAudioUrl = null;
+      let latestTranscript = "";
+      let streamedAssistantText = "";
 
       let vadAudioContext = null;
       let vadSourceNode = null;
@@ -73,6 +77,63 @@
         status.textContent = message;
       }
 
+      function updateStatusFromStream() {
+        const transcriptLine = latestTranscript ? `Transcript: ${latestTranscript}` : "Transcript: ...";
+        const assistantLine = streamedAssistantText ? streamedAssistantText : "...";
+        setStatus(`${transcriptLine}\nAssistant: ${assistantLine}`);
+      }
+
+      function playNextAssistantChunk() {
+        if (assistantAudioPlaying || assistantAudioQueue.length === 0) return;
+
+        const nextUrl = assistantAudioQueue.shift();
+        assistantAudioPlaying = true;
+        currentAssistantAudioUrl = nextUrl;
+        currentAssistantAudio = new Audio(nextUrl);
+
+        currentAssistantAudio.onended = () => {
+          if (currentAssistantAudioUrl) {
+            URL.revokeObjectURL(currentAssistantAudioUrl);
+          }
+          currentAssistantAudioUrl = null;
+          currentAssistantAudio = null;
+          assistantAudioPlaying = false;
+          playNextAssistantChunk();
+        };
+
+        currentAssistantAudio.onerror = () => {
+          if (currentAssistantAudioUrl) {
+            URL.revokeObjectURL(currentAssistantAudioUrl);
+          }
+          currentAssistantAudioUrl = null;
+          currentAssistantAudio = null;
+          assistantAudioPlaying = false;
+          playNextAssistantChunk();
+        };
+
+        currentAssistantAudio.play().catch(() => {
+          if (currentAssistantAudioUrl) {
+            URL.revokeObjectURL(currentAssistantAudioUrl);
+          }
+          currentAssistantAudioUrl = null;
+          currentAssistantAudio = null;
+          assistantAudioPlaying = false;
+          playNextAssistantChunk();
+        });
+      }
+
+      function enqueueAssistantAudioChunk(audioB64, mimeType) {
+        const binary = atob(audioB64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        assistantAudioQueue.push(url);
+        playNextAssistantChunk();
+      }
+
       function stopAssistantPlayback() {
         if (currentAssistantAudio) {
           currentAssistantAudio.pause();
@@ -83,6 +144,11 @@
           URL.revokeObjectURL(currentAssistantAudioUrl);
           currentAssistantAudioUrl = null;
         }
+        for (const queuedUrl of assistantAudioQueue) {
+          URL.revokeObjectURL(queuedUrl);
+        }
+        assistantAudioQueue = [];
+        assistantAudioPlaying = false;
         if (window.speechSynthesis) {
           window.speechSynthesis.cancel();
         }
@@ -193,6 +259,23 @@
               setStatus("Processing audio...");
               return;
             }
+            if (data.type === "transcript") {
+              latestTranscript = data.transcript || "";
+              streamedAssistantText = "";
+              updateStatusFromStream();
+              return;
+            }
+            if (data.type === "assistant_text_delta") {
+              streamedAssistantText += data.delta || "";
+              updateStatusFromStream();
+              return;
+            }
+            if (data.type === "assistant_audio_chunk") {
+              if (data.audio_b64 && data.audio_mime) {
+                enqueueAssistantAudioChunk(data.audio_b64, data.audio_mime);
+              }
+              return;
+            }
             if (data.type === "pipeline_result") {
               const latency = data.latency_ms || {};
               const clientRoundTripMs =
@@ -200,7 +283,7 @@
 
               const latencyLine =
                 latency.total !== undefined
-                  ? `\nLatency (ms): asr=${latency.asr}, llm=${latency.llm}, tts=${latency.tts}, total=${latency.total}`
+                  ? `\nLatency (ms): asr=${latency.asr}, llm=${latency.llm}, tts=${latency.tts}, ttfa=${latency.ttfa}, total=${latency.total}`
                   : "";
 
               const roundTripLine =
@@ -208,33 +291,15 @@
                   ? `\nClient roundtrip (ms): ${clientRoundTripMs}`
                   : "";
 
-              const msg = `Transcript: ${data.transcript}\nAssistant: ${data.assistant_text}${latencyLine}${roundTripLine}`;
+              latestTranscript = data.transcript || latestTranscript;
+              streamedAssistantText = data.assistant_text || streamedAssistantText;
+              const chunkLine = `\nAudio chunks: ${data.audio_chunk_count ?? 0}`;
+              const msg = `Transcript: ${latestTranscript}\nAssistant: ${streamedAssistantText}${chunkLine}${latencyLine}${roundTripLine}`;
               setStatus(msg);
 
-              if (data.assistant_audio_b64 && data.assistant_audio_mime) {
-                const binary = atob(data.assistant_audio_b64);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) {
-                  bytes[i] = binary.charCodeAt(i);
-                }
-                const blob = new Blob([bytes], { type: data.assistant_audio_mime });
-
+              if (!data.assistant_audio_streamed) {
                 stopAssistantPlayback();
-                currentAssistantAudioUrl = URL.createObjectURL(blob);
-                currentAssistantAudio = new Audio(currentAssistantAudioUrl);
-                currentAssistantAudio.onended = () => {
-                  if (currentAssistantAudioUrl) {
-                    URL.revokeObjectURL(currentAssistantAudioUrl);
-                    currentAssistantAudioUrl = null;
-                  }
-                  currentAssistantAudio = null;
-                };
-                currentAssistantAudio.play().catch((error) => {
-                  setStatus("Playback error: " + error.message);
-                });
-              } else {
-                stopAssistantPlayback();
-                speakInBrowser(data.assistant_text);
+                speakInBrowser(streamedAssistantText);
               }
               return;
             }

@@ -19,8 +19,21 @@ class ConversationManager:
         self.messages.append({"role": "user", "content": content})
         self._trim()
 
-    def add_assistant_message(self, content: str) -> None:
-        self.messages.append({"role": "assistant", "content": content})
+    def add_assistant_message(self, content: str, tool_calls: list[dict] | None = None) -> None:
+        message = {"role": "assistant", "content": content}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        self.messages.append(message)
+        self._trim()
+
+    def add_tool_response(self, tool_call_id: str, name: str, content: str) -> None:
+        """Add a tool response to the conversation."""
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": name,
+            "content": content
+        })
         self._trim()
 
     def get_messages(self) -> list[dict[str, str]]:

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voice Agent - Full WebSocket Streaming</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 800px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        background: #f4f7f6;
+      }
+      .card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      }
+      button {
+        padding: 0.8rem 1.2rem;
+        margin: 0.5rem;
+        cursor: pointer;
+        border: none;
+        border-radius: 6px;
+        font-weight: bold;
+        transition: opacity 0.2s;
+      }
+      #start { background: #2ecc71; color: white; }
+      #stop { background: #e74c3c; color: white; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      #status {
+        margin-top: 1rem;
+        padding: 1rem;
+        background: #2c3e50;
+        color: #ecf0f1;
+        border-radius: 8px;
+        white-space: pre-wrap;
+        min-height: 100px;
+        font-family: monospace;
+      }
+      h1 { color: #2c3e50; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Phase 3: Full WebSocket</h1>
+      <p>Continuous streaming. Low latency. Zero handshake turns.</p>
+      
+      <button type="button" id="start">Connect & Start Mic</button>
+      <button type="button" id="stop" disabled>Stop</button>
+
+      <div id="status">Status: Disconnected</div>
+    </div>
+
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
+    <script>
+      const status = document.getElementById("status");
+      const startBtn = document.getElementById("start");
+      const stopBtn = document.getElementById("stop");
+
+      let ws = null;
+      let mediaRecorder = null;
+      let audioCtx = null;
+      let nextStartTime = 0;
+      let latestTranscript = "";
+      let streamedAssistantText = "";
+
+      function setStatus(msg) {
+        status.textContent = msg;
+      }
+
+      function updateUI() {
+        const transcriptLine = latestTranscript ? `Transcript: ${latestTranscript}` : "Transcript: ...";
+        const assistantLine = streamedAssistantText ? streamedAssistantText : "...";
+        setStatus(`${transcriptLine}\n\nAssistant: ${assistantLine}`);
+      }
+
+      function playPCM(base64Audio) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+        
+        const binary = atob(base64Audio);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        
+        // Ensure length aligns with Float32 (4 bytes per sample)
+        const validBytes = bytes.length - (bytes.length % 4);
+        const float32Data = new Float32Array(bytes.buffer, 0, validBytes / 4);
+        
+        const audioBuffer = audioCtx.createBuffer(1, float32Data.length, 44100);
+        audioBuffer.copyToChannel(float32Data, 0);
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        
+        // Schedule gapless playback
+        if (nextStartTime < audioCtx.currentTime) {
+            nextStartTime = audioCtx.currentTime + 0.1; // 100ms buffering
+        }
+        source.start(nextStartTime);
+        nextStartTime += audioBuffer.duration;
+      }
+
+      async function startStreaming(event) {
+        if (event) event.preventDefault();
+        try {
+          // 1. Connect WebSocket
+          const protocol = location.protocol === "https:" ? "wss" : "ws";
+          ws = new WebSocket(`${protocol}://${location.host}/ws/streaming-pipeline`);
+          
+          ws.onopen = () => setStatus("Connected to Streaming Pipeline");
+          ws.onclose = () => {
+            setStatus("Disconnected");
+            stopStreaming();
+          };
+          
+          ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "transcript") {
+              latestTranscript = data.transcript;
+              streamedAssistantText = "";
+              
+              // Interrupt current TTS playback on barge-in
+              if (audioCtx) {
+                audioCtx.close();
+                audioCtx = null;
+                nextStartTime = 0;
+              }
+              
+              updateUI();
+            } else if (data.type === "assistant_text_delta") {
+              streamedAssistantText += data.delta;
+              updateUI();
+            } else if (data.type === "assistant_audio_chunk") {
+              if (data.audio_mime === "audio/pcm") {
+                playPCM(data.audio_b64);
+              }
+            } else if (data.type === "error") {
+              setStatus("Error: " + data.error);
+              console.error("Backend pipeline error:", data.error);
+            }
+          };
+
+          // 2. Start Microphone
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64Audio = reader.result.split(',')[1];
+                ws.send(JSON.stringify({
+                  type: "user_audio_chunk",
+                  audio_b64: base64Audio
+                }));
+              };
+              reader.readAsDataURL(event.data);
+            }
+          };
+
+          mediaRecorder.start(250); // Send chunks every 250ms
+          
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          setStatus("Streaming active. Speak now!");
+
+        } catch (err) {
+          setStatus("Error: " + err.message);
+        }
+      }
+
+      function stopStreaming(event) {
+        if (event) event.preventDefault();
+        if (mediaRecorder) {
+          mediaRecorder.stop();
+          mediaRecorder.stream.getTracks().forEach(t => t.stop());
+          mediaRecorder = null;
+        }
+        if (ws) {
+          ws.send(JSON.stringify({ type: "stop" }));
+          ws.close();
+          ws = null;
+        }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      }
+
+      startBtn.addEventListener("click", startStreaming);
+      stopBtn.addEventListener("click", stopStreaming);
+    </script>
+  </body>
+</html>
