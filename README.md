@@ -2,8 +2,9 @@
 
 <!-- Organization Logo Placeholder -->
 <p align="center">
-	<img src="./static/org-logo-placeholder.svg" alt="Organization Logo" width="160" />
+	<img width="200" height="200" alt="image" src="https://github.com/user-attachments/assets/ab1c911c-2476-41f2-8d20-e8b53aa26dfe" />
 </p>
+
 
 <p align="center">
 	Open-source starter kit for building real-time voice agents with FastAPI, WebSocket streaming, and pluggable ASR/LLM/TTS providers.
