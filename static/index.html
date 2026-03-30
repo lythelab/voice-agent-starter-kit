@@ -4,43 +4,327 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Voice Agent Transport Layer</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
     <style>
+      :root {
+        --bg-top: #0a111c;
+        --bg-bottom: #111d2d;
+        --surface: rgba(16, 27, 42, 0.72);
+        --surface-strong: rgba(20, 33, 51, 0.9);
+        --text: #e7eefc;
+        --muted: #a8bddc;
+        --line: rgba(146, 179, 224, 0.22);
+        --accent: #ef7b45;
+        --accent-dark: #cb5f2d;
+        --ok: #35c979;
+        --warn: #e8a64e;
+        --danger: #ff5f7f;
+        --shadow: 0 24px 60px rgba(1, 4, 9, 0.52);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       body {
-        font-family: system-ui, sans-serif;
-        max-width: 760px;
-        margin: 2rem auto;
-        padding: 0 1rem;
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Outfit", "Segoe UI", sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at 14% 14%, #5d3d2a 0%, rgba(93, 61, 42, 0) 38%),
+          radial-gradient(circle at 88% 20%, #1f3d5b 0%, rgba(31, 61, 91, 0) 44%),
+          linear-gradient(165deg, var(--bg-top), var(--bg-bottom));
+        padding: 24px;
+        overflow-x: hidden;
+      }
+
+      .app {
+        width: min(980px, 100%);
+        margin: 0 auto;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: linear-gradient(150deg, var(--surface-strong), var(--surface));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+        padding: 26px;
+        animation: rise 500ms ease-out;
+      }
+
+      .hero {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .title {
+        margin: 0;
+        font-size: clamp(1.5rem, 3.5vw, 2.2rem);
+        letter-spacing: 0.01em;
+      }
+
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(18, 30, 47, 0.78);
+        padding: 10px 14px;
+        font-size: 0.9rem;
+        white-space: nowrap;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 99px;
+        background: #6a85ad;
+      }
+
+      .pill[data-tone="ok"] .dot {
+        background: var(--ok);
+      }
+
+      .pill[data-tone="warn"] .dot {
+        background: var(--warn);
+      }
+
+      .pill[data-tone="danger"] .dot {
+        background: var(--danger);
+      }
+
+      .controls {
+        margin-top: 22px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
       }
 
       button {
-        padding: 0.6rem 1rem;
-        margin-right: 0.6rem;
+        font: inherit;
+        font-weight: 600;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(19, 31, 49, 0.9);
+        color: var(--text);
+        padding: 12px;
         cursor: pointer;
+        transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+      }
+
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        border-color: rgba(190, 214, 248, 0.36);
+        box-shadow: 0 10px 24px rgba(2, 9, 18, 0.4);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .accent {
+        background: linear-gradient(155deg, #ff9358, var(--accent));
+        color: #fff;
+        border-color: rgba(0, 0, 0, 0);
+      }
+
+      .accent:hover:not(:disabled) {
+        box-shadow: 0 16px 30px rgba(239, 123, 69, 0.28);
+        background: linear-gradient(155deg, #ffa26f, var(--accent-dark));
+      }
+
+      .stack {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .panel {
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: rgba(18, 30, 47, 0.74);
+        padding: 14px;
+        min-height: 150px;
+      }
+
+      .panel h2 {
+        margin: 0 0 10px;
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .panel p {
+        margin: 0;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .metrics {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(18, 30, 47, 0.8);
+        padding: 10px 12px;
+      }
+
+      .metric .k {
+        display: block;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .metric .v {
+        display: block;
+        margin-top: 6px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.95rem;
       }
 
       #status {
-        margin-top: 1rem;
-        padding: 0.75rem;
-        border: 1px solid #ccc;
-        border-radius: 8px;
+        margin-top: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: rgba(14, 26, 42, 0.86);
+        padding: 11px 12px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.83rem;
         white-space: pre-wrap;
+      }
+
+      #status[data-tone="ok"] {
+        border-color: rgba(31, 138, 76, 0.32);
+      }
+
+      #status[data-tone="warn"] {
+        border-color: rgba(169, 97, 26, 0.34);
+      }
+
+      #status[data-tone="danger"] {
+        border-color: rgba(185, 31, 58, 0.34);
+      }
+
+      @media (max-width: 860px) {
+        .controls {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .stack {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        body {
+          padding: 12px;
+        }
+
+        .app {
+          border-radius: 20px;
+          padding: 16px;
+        }
+
+        .hero {
+          flex-direction: column;
+        }
+
+        .controls,
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
     </style>
   </head>
   <body>
-    <h1>Transport Layer (Daily WebRTC)</h1>
-    <p>Transport + audio pipeline demo (mic → ASR → LLM → TTS).</p>
+    <main class="app">
+      <section class="hero">
+        <div>
+          <h1 class="title">Voice Agent Control Deck</h1>
+          <p class="subtitle">One-page transport demo: mic -> ASR -> LLM -> TTS</p>
+        </div>
+        <div id="connectionState" class="pill" data-tone="warn">
+          <span class="dot"></span>
+          <span>Standby</span>
+        </div>
+      </section>
 
-    <button id="join">Join Room</button>
-    <button id="leave" disabled>Leave Room</button>
-    <button id="startMic">Start Mic</button>
-    <button id="stopMic" disabled>Stop Mic + Send</button>
+      <section class="controls">
+        <button id="join" class="accent">Join Room</button>
+        <button id="leave" disabled>Leave Room</button>
+        <button id="startMic">Start Mic</button>
+        <button id="stopMic" disabled>Stop Mic + Send</button>
+      </section>
 
-    <div id="status">Idle</div>
+      <section class="stack">
+        <article class="panel">
+          <h2>Transcript</h2>
+          <p id="transcriptText">Waiting for speech...</p>
+        </article>
+        <article class="panel">
+          <h2>Assistant</h2>
+          <p id="assistantText">Ready for response...</p>
+        </article>
+      </section>
+
+      <section class="metrics">
+        <article class="metric">
+          <span class="k">Pipeline Latency</span>
+          <span id="latencyStat" class="v">-</span>
+        </article>
+        <article class="metric">
+          <span class="k">Client Roundtrip</span>
+          <span id="roundTripStat" class="v">-</span>
+        </article>
+        <article class="metric">
+          <span class="k">Audio Chunks</span>
+          <span id="chunkStat" class="v">0</span>
+        </article>
+      </section>
+
+      <div id="status" data-tone="warn">Idle</div>
+    </main>
 
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
       const status = document.getElementById("status");
+      const connectionState = document.getElementById("connectionState");
+      const transcriptText = document.getElementById("transcriptText");
+      const assistantText = document.getElementById("assistantText");
+      const latencyStat = document.getElementById("latencyStat");
+      const roundTripStat = document.getElementById("roundTripStat");
+      const chunkStat = document.getElementById("chunkStat");
+
       const joinBtn = document.getElementById("join");
       const leaveBtn = document.getElementById("leave");
       const startMicBtn = document.getElementById("startMic");
@@ -73,14 +357,20 @@
       const VAD_MAX_RECORDING_MS = 15000;
       const VAD_RMS_THRESHOLD = 0.02;
 
-      function setStatus(message) {
+      function setConnectionState(label, tone = "warn") {
+        connectionState.dataset.tone = tone;
+        connectionState.lastElementChild.textContent = label;
+      }
+
+      function setStatus(message, tone = "warn") {
         status.textContent = message;
+        status.dataset.tone = tone;
       }
 
       function updateStatusFromStream() {
-        const transcriptLine = latestTranscript ? `Transcript: ${latestTranscript}` : "Transcript: ...";
-        const assistantLine = streamedAssistantText ? streamedAssistantText : "...";
-        setStatus(`${transcriptLine}\nAssistant: ${assistantLine}`);
+        transcriptText.textContent = latestTranscript || "Waiting for speech...";
+        assistantText.textContent = streamedAssistantText || "Ready for response...";
+        setStatus("Streaming transcript + assistant text", "ok");
       }
 
       function playNextAssistantChunk() {
@@ -227,14 +517,14 @@
           }
 
           if (vadDetectedSpeech && Date.now() - vadLastSpeechAt >= VAD_SILENCE_MS) {
-            setStatus("VAD: silence detected, sending audio...");
+            setStatus("VAD: silence detected, sending audio...", "warn");
             stopRecording(true, "vad_silence");
           }
         }, VAD_POLL_MS);
 
         maxRecordTimeoutId = setTimeout(() => {
           if (!mediaRecorder || mediaRecorder.state === "inactive") return;
-          setStatus("VAD: max utterance reached, sending audio...");
+          setStatus("VAD: max utterance reached, sending audio...", "warn");
           stopRecording(true, "max_duration");
         }, VAD_MAX_RECORDING_MS);
       }
@@ -244,19 +534,28 @@
         const protocol = location.protocol === "https:" ? "wss" : "ws";
         ws = new WebSocket(`${protocol}://${location.host}/ws/audio-pipeline`);
 
-        ws.onopen = () => setStatus("Audio pipeline connected");
-        ws.onclose = () => setStatus("Audio pipeline disconnected");
-        ws.onerror = () => setStatus("Audio pipeline socket error");
+        ws.onopen = () => {
+          setConnectionState("Pipeline connected", "ok");
+          setStatus("Audio pipeline connected", "ok");
+        };
+        ws.onclose = () => {
+          setConnectionState("Pipeline disconnected", "warn");
+          setStatus("Audio pipeline disconnected", "warn");
+        };
+        ws.onerror = () => {
+          setConnectionState("Pipeline error", "danger");
+          setStatus("Audio pipeline socket error", "danger");
+        };
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
             if (data.type === "ready") {
-              setStatus("Pipeline ready");
+              setStatus("Pipeline ready", "ok");
               return;
             }
             if (data.type === "processing") {
-              setStatus("Processing audio...");
+              setStatus("Processing audio...", "warn");
               return;
             }
             if (data.type === "transcript") {
@@ -280,22 +579,21 @@
               const latency = data.latency_ms || {};
               const clientRoundTripMs =
                 lastAudioSentAt > 0 ? Math.round(performance.now() - lastAudioSentAt) : null;
-
-              const latencyLine =
-                latency.total !== undefined
-                  ? `\nLatency (ms): asr=${latency.asr}, llm=${latency.llm}, tts=${latency.tts}, ttfa=${latency.ttfa}, total=${latency.total}`
-                  : "";
-
-              const roundTripLine =
-                clientRoundTripMs !== null
-                  ? `\nClient roundtrip (ms): ${clientRoundTripMs}`
-                  : "";
-
               latestTranscript = data.transcript || latestTranscript;
               streamedAssistantText = data.assistant_text || streamedAssistantText;
-              const chunkLine = `\nAudio chunks: ${data.audio_chunk_count ?? 0}`;
-              const msg = `Transcript: ${latestTranscript}\nAssistant: ${streamedAssistantText}${chunkLine}${latencyLine}${roundTripLine}`;
-              setStatus(msg);
+
+              transcriptText.textContent = latestTranscript || "Waiting for speech...";
+              assistantText.textContent = streamedAssistantText || "Ready for response...";
+
+              latencyStat.textContent =
+                latency.total !== undefined
+                  ? `asr ${latency.asr} / llm ${latency.llm} / tts ${latency.tts} / total ${latency.total} ms`
+                  : "-";
+              roundTripStat.textContent =
+                clientRoundTripMs !== null ? `${clientRoundTripMs} ms` : "-";
+              chunkStat.textContent = String(data.audio_chunk_count ?? 0);
+
+              setStatus("Pipeline response complete", "ok");
 
               if (!data.assistant_audio_streamed) {
                 stopAssistantPlayback();
@@ -304,10 +602,10 @@
               return;
             }
             if (data.type === "error") {
-              setStatus("Pipeline error: " + data.error);
+              setStatus("Pipeline error: " + data.error, "danger");
             }
           } catch (error) {
-            setStatus("Invalid pipeline message: " + error.message);
+            setStatus("Invalid pipeline message: " + error.message, "danger");
           }
         };
       }
@@ -329,21 +627,31 @@
       joinBtn.addEventListener("click", async () => {
         try {
           connectPipelineSocket();
-          setStatus("Requesting token...");
+          setStatus("Requesting token...", "warn");
           const { token, room_url } = await getToken();
 
           callObject = window.Daily.createCallObject();
-          callObject.on("joined-meeting", () => setStatus("Joined: " + room_url));
-          callObject.on("left-meeting", () => setStatus("Left room"));
-          callObject.on("error", (event) => setStatus("Error: " + JSON.stringify(event)));
+          callObject.on("joined-meeting", () => {
+            setConnectionState("In room", "ok");
+            setStatus("Joined: " + room_url, "ok");
+          });
+          callObject.on("left-meeting", () => {
+            setConnectionState("Left room", "warn");
+            setStatus("Left room", "warn");
+          });
+          callObject.on("error", (event) => {
+            setConnectionState("Transport error", "danger");
+            setStatus("Error: " + JSON.stringify(event), "danger");
+          });
 
-          setStatus("Joining room...");
+          setStatus("Joining room...", "warn");
           await callObject.join({ url: room_url, token });
 
           joinBtn.disabled = true;
           leaveBtn.disabled = false;
         } catch (error) {
-          setStatus("Join failed: " + error.message);
+          setConnectionState("Join failed", "danger");
+          setStatus("Join failed: " + error.message, "danger");
         }
       });
 
@@ -355,6 +663,7 @@
 
         joinBtn.disabled = false;
         leaveBtn.disabled = true;
+        setConnectionState("Standby", "warn");
       });
 
       startMicBtn.addEventListener("click", async () => {
@@ -362,7 +671,7 @@
           connectPipelineSocket();
 
           stopAssistantPlayback();
-          setStatus("Barge-in: assistant interrupted. Listening...");
+          setStatus("Barge-in: assistant interrupted. Listening...", "warn");
 
           activeMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           mediaRecorder = new MediaRecorder(activeMicStream, { mimeType: "audio/webm" });
@@ -387,7 +696,7 @@
 
             if (!shouldSend || micChunks.length === 0) {
               stopMicStream();
-              setStatus("Recording stopped");
+              setStatus("Recording stopped", "warn");
               return;
             }
 
@@ -402,7 +711,7 @@
 
             if (!ws || ws.readyState !== WebSocket.OPEN) {
               stopMicStream();
-              setStatus("Socket not connected");
+              setStatus("Socket not connected", "danger");
               return;
             }
 
@@ -418,7 +727,8 @@
             setStatus(
               stopReason === "manual"
                 ? "Audio sent to pipeline"
-                : `Audio sent to pipeline (${stopReason})`
+                : `Audio sent to pipeline (${stopReason})`,
+              "ok"
             );
 
             stopMicStream();
@@ -429,13 +739,13 @@
 
           startMicBtn.disabled = true;
           stopMicBtn.disabled = false;
-          setStatus("Recording... VAD active (auto-stop on silence)");
+          setStatus("Recording... VAD active (auto-stop on silence)", "warn");
         } catch (error) {
           stopVadMonitoring();
           stopMicStream();
           startMicBtn.disabled = false;
           stopMicBtn.disabled = true;
-          setStatus("Mic error: " + error.message);
+          setStatus("Mic error: " + error.message, "danger");
         }
       });
 
