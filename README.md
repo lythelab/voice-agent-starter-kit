@@ -2,7 +2,7 @@
 
 <!-- Organization Logo Placeholder -->
 <p align="center">
-	<img width="200" height="200" alt="image" src="https://github.com/user-attachments/assets/ab1c911c-2476-41f2-8d20-e8b53aa26dfe" />
+	<img width="100" height="100" alt="image" src="https://github.com/user-attachments/assets/ab1c911c-2476-41f2-8d20-e8b53aa26dfe" />
 </p>
 
 
