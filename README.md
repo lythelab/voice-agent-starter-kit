@@ -135,14 +135,6 @@ See .env.example for the full list. Key ones include:
 - Preserve streaming behavior in websocket events to avoid UI regressions.
 - If you add a new provider, implement it behind adapters.py interfaces.
 
-## Logo Placeholder Setup
-
-Replace the placeholder logo path with your organization brand asset:
-
-1. Replace static/org-logo-placeholder.svg with your brand asset (or update the path).
-2. Update alt text and dimensions in the README image tag.
-3. Keep SVG or transparent PNG preferred for crisp rendering.
-
 ## License
 
-Add your preferred license file (for example MIT) and update this section accordingly.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
