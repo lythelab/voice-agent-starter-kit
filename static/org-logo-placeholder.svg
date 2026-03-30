@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" role="img" aria-labelledby="title desc">
+  <title id="title">Organization Logo Placeholder</title>
+  <desc id="desc">Replace this placeholder with your organization logo.</desc>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f3d5b"/>
+      <stop offset="100%" stop-color="#ef7b45"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="416" height="116" rx="16" fill="#0f1a2b" stroke="#2d4767" stroke-width="2"/>
+  <circle cx="62" cy="60" r="30" fill="url(#g)"/>
+  <path d="M48 60h28M62 46v28" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <text x="108" y="52" fill="#e7eefc" font-size="22" font-family="Segoe UI, Arial, sans-serif" font-weight="700">YOUR ORG NAME</text>
+  <text x="108" y="78" fill="#a8bddc" font-size="14" font-family="Segoe UI, Arial, sans-serif">Open Source Voice Agent Project</text>
+</svg>
