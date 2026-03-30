@@ -10,6 +10,18 @@ from typing import AsyncIterator
 import httpx
 
 from app.config import settings
+from app.pipeline.tools import ToolRegistry, create_default_registry
+
+# Persistent HTTP client — reuses TCP+TLS connections across requests.
+# Eliminates ~500-1500ms of TLS handshake overhead per API call.
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=30.0)
+    return _http_client
 
 
 def pcm16le_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1) -> bytes:
@@ -43,8 +55,8 @@ class ASRAdapter:
             "Content-Type": content_type,
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers, content=payload)
+        client = _get_client()
+        response = await client.post(url, headers=headers, content=payload)
 
         if response.status_code >= 400:
             raise RuntimeError(f"Deepgram error: {response.text}")
@@ -61,106 +73,192 @@ class ASRAdapter:
             transcript = ""
         return transcript
 
-
 class LLMAdapter:
-    async def stream_reply_tokens(self, user_text: str) -> AsyncIterator[str]:
+    def __init__(self, tool_registry: ToolRegistry | None = None) -> None:
+        self.tool_registry = tool_registry or create_default_registry()
+
+    async def stream_reply_tokens(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+        """Stream LLM tokens. Tool calls are handled internally via the registry."""
         if settings.groq_api_key:
-            async for token in self._groq_stream_reply_tokens(user_text):
+            async for token in self._groq_stream(messages, include_tools=True):
                 yield token
             return
 
+        # Fallback: yield words from a canned response
+        last_user_text = messages[-1].get("content", "") if messages else ""
         fallback = (
             "I heard you. This is a fallback response because GROQ_API_KEY is not configured. "
-            f"You said: {user_text}"
+            f"You said: {last_user_text}"
         )
         for match in re.finditer(r"\S+\s*", fallback):
             yield match.group(0)
 
-    async def generate_reply(self, user_text: str) -> str:
+    async def generate_reply(self, messages: list[dict[str, str]]) -> str:
+        """Non-streaming convenience wrapper."""
         parts: list[str] = []
-        async for token in self.stream_reply_tokens(user_text):
+        async for token in self.stream_reply_tokens(messages):
             parts.append(token)
         return "".join(parts).strip()
 
-    async def _groq_stream_reply_tokens(self, user_text: str) -> AsyncIterator[str]:
+    async def _groq_stream(
+        self, messages: list[dict], *, include_tools: bool = True
+    ) -> AsyncIterator[str]:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {settings.groq_api_key}",
             "Content-Type": "application/json",
         }
-        body = {
+        body: dict = {
             "model": settings.groq_model,
-            "messages": [
-                {"role": "system", "content": settings.system_prompt},
-                {"role": "user", "content": user_text},
-            ],
+            "messages": messages,
             "temperature": 0.2,
+            "max_tokens": 1024,
             "stream": True,
         }
 
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            async with client.stream("POST", url, headers=headers, json=body) as response:
-                if response.status_code >= 400:
-                    raise RuntimeError(f"Groq error: {await response.aread()}")
+        # Only attach tool schemas when the caller wants them and the registry
+        # has tools.  On the follow-up call after tool execution we set
+        # include_tools=False to prevent infinite recursion.
+        if include_tools and self.tool_registry.has_tools():
+            body["tools"] = self.tool_registry.get_schemas()
+            body["tool_choice"] = "auto"
 
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    if not line.startswith("data:"):
-                        continue
+        print(f"[DEBUG] Groq request — model={body['model']}, include_tools={include_tools}, "
+              f"tools_attached={'tools' in body}, tool_count={len(body.get('tools', []))}")
+        print(f"[DEBUG] Messages count: {len(messages)}, last role: {messages[-1].get('role') if messages else 'N/A'}")
 
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
+        client = _get_client()
+        tool_calls_buffer: dict[int, dict] = {}
+        content_parts: list[str] = []
 
-                    try:
-                        payload = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
+        async with client.stream("POST", url, headers=headers, json=body, timeout=45.0) as response:
+            if response.status_code >= 400:
+                raise RuntimeError(f"Groq error: {await response.aread()}")
 
-                    choices = payload.get("choices", [])
-                    if not choices:
-                        continue
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = payload.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
 
-                    token = choices[0].get("delta", {}).get("content")
+                # --- Accumulate streamed tool-call fragments ---
+                if "tool_calls" in delta:
+                    print(f"[DEBUG] Received tool_call delta: {delta['tool_calls']}")
+                    for tc in delta["tool_calls"]:
+                        idx = tc.get("index", 0)
+                        if idx not in tool_calls_buffer:
+                            tool_calls_buffer[idx] = {
+                                "id": tc.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("function", {}).get("name", ""),
+                                    "arguments": "",
+                                },
+                            }
+                        if tc.get("id"):
+                            tool_calls_buffer[idx]["id"] = tc["id"]
+                        fn = tc.get("function", {})
+                        if fn.get("name"):
+                            tool_calls_buffer[idx]["function"]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            tool_calls_buffer[idx]["function"]["arguments"] += fn["arguments"]
+
+                # --- Yield regular content tokens ---
+                else:
+                    token = delta.get("content")
                     if token:
+                        content_parts.append(token)
                         yield token
 
-    async def _groq_reply(self, user_text: str) -> str:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {settings.groq_api_key}",
-            "Content-Type": "application/json",
-        }
-        body = {
-            "model": settings.groq_model,
-            "messages": [
-                {"role": "system", "content": settings.system_prompt},
-                {"role": "user", "content": user_text},
-            ],
-            "temperature": 0.2,
-        }
+        # -----------------------------------------------------------------
+        # Tool-call feedback loop
+        # If the LLM requested tool calls, execute them via the registry,
+        # feed the results back, and stream the LLM's natural-language reply.
+        # -----------------------------------------------------------------
+        if not tool_calls_buffer:
+            print("[DEBUG] No tool calls detected — LLM replied with text only.")
+            return
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers, json=body)
+        print(f"[DEBUG] Tool calls detected: {[tool_calls_buffer[i]['function']['name'] for i in sorted(tool_calls_buffer)]}")
 
-        if response.status_code >= 400:
-            raise RuntimeError(f"Groq error: {response.text}")
+        tool_calls_list = [tool_calls_buffer[i] for i in sorted(tool_calls_buffer)]
 
-        data = response.json()
-        choices = data.get("choices", [])
-        if not choices:
-            return ""
-        return choices[0].get("message", {}).get("content", "").strip()
+        # Build follow-up messages: original + assistant + tool results
+        follow_up = list(messages)
+        follow_up.append({
+            "role": "assistant",
+            "content": "".join(content_parts) if content_parts else None,
+            "tool_calls": tool_calls_list,
+        })
+
+        for tc in tool_calls_list:
+            func_name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except json.JSONDecodeError:
+                args = {}
+
+            result = await self.tool_registry.execute(func_name, args)
+            follow_up.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "name": func_name,
+                "content": result,
+            })
+
+        # Second streaming call — tools disabled to prevent recursion
+        async for token in self._groq_stream(follow_up, include_tools=False):
+            yield token
 
 
 class TTSAdapter:
+    def __init__(self):
+        # Add filler words for more realistic speech
+        self.filler_words = [
+            "um", "uh", "well", "so", "actually", "basically", 
+            "let's see", "you know", "kind of", "sort of", "right"
+        ]
+        # Percentage chance of adding a filler word/sentence (0-100)
+        self.filler_probability = 15  # 15% chance
+
     async def synthesize(self, text: str) -> tuple[str, str] | None:
         if not text:
             return None
         if settings.cartesia_api_key and settings.cartesia_voice_id:
             return await self._cartesia_synthesize(text)
         return None
+
+    async def synthesize_with_fillers(self, text: str) -> tuple[str, str] | None:
+        """Synthesize text with occasional filler words for realism."""
+        import random
+        
+        # Randomly decide whether to add fillers based on probability
+        if random.randint(1, 100) <= self.filler_probability:
+            # Add a random filler at the beginning sometimes
+            if random.choice([True, False]):
+                filler = random.choice(self.filler_words)
+                text = f"{filler}, {text}"
+            # Or add fillers within the sentence
+            else:
+                words = text.split()
+                # Add a filler approximately every 5-10 words
+                for i in range(len(words)//7, 0, -1):
+                    insert_pos = min(i * 7, len(words)-1)
+                    if random.randint(1, 100) <= 50:  # 50% chance for each insertion point
+                        filler = random.choice(self.filler_words)
+                        words.insert(insert_pos, filler)
+                text = " ".join(words)
+        
+        return await self.synthesize(text)
 
     async def _cartesia_synthesize(self, text: str) -> tuple[str, str]:
         url = f"{settings.cartesia_base_url}/tts/bytes"
@@ -200,8 +298,8 @@ class TTSAdapter:
             },
         }
 
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        client = _get_client()
+        response = await client.post(url, headers=headers, json=payload, timeout=45.0)
 
         if response.status_code >= 400:
             raise RuntimeError(f"Cartesia error: {response.text}")

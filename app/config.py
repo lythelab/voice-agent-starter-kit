@@ -15,7 +15,11 @@ class Settings:
     groq_model: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     system_prompt: str = os.getenv(
         "SYSTEM_PROMPT",
-        "You are a concise, helpful real-time voice assistant.",
+        "You are a real-time voice assistant. Keep every reply to 1-2 short sentences. Be concise and conversational. Never use bullet points, numbered lists, or markdown formatting.",
+    )
+    instruction_prompt: str = os.getenv(
+        "INSTRUCTION_PROMPT",
+        "You are a helpful and friendly AI assistant.",
     )
     cartesia_api_key: str = os.getenv("CARTESIA_API_KEY", "")
     cartesia_base_url: str = os.getenv("CARTESIA_BASE_URL", "https://api.cartesia.ai")

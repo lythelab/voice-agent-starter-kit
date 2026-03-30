@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 import sys
 import base64
 import json
@@ -15,11 +16,11 @@ if __package__ in (None, ""):
 
 from app.config import settings
 from app.pipeline import AudioPipelineService
+# from app.pipeline_ws.service_ws import StreamingAudioPipeline  # TODO: create this module
 from app.telemetry import latency_store
 from app.transport.daily import create_meeting_token
 
 app = FastAPI(title="Voice Agent Transport Layer")
-pipeline_service = AudioPipelineService()
 
 static_dir = Path(__file__).resolve().parents[1] / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -63,10 +64,29 @@ async def index() -> FileResponse:
     return FileResponse(static_dir / "index.html")
 
 
+# @app.get("/streaming")  # TODO: re-enable once pipeline_ws module exists
+# async def streaming_index() -> FileResponse:
+#     return FileResponse(static_dir / "index_ws.html")
+
+
 @app.websocket("/ws/audio-pipeline")
 async def audio_pipeline(websocket: WebSocket) -> None:
     await websocket.accept()
+    pipeline_service = AudioPipelineService()
+    active_task: asyncio.Task | None = None
     await websocket.send_text(json.dumps({"type": "ready"}))
+
+    async def _run_pipeline(audio_bytes: bytes, mime_type: str) -> None:
+        """Stream pipeline events back over the socket."""
+        try:
+            async for event in pipeline_service.process_audio_stream(audio_bytes, mime_type):
+                await websocket.send_text(json.dumps(event))
+        except asyncio.CancelledError:
+            await websocket.send_text(
+                json.dumps({"type": "info", "message": "Previous request cancelled (barge-in)"})
+            )
+        except Exception as exc:  # noqa: BLE001
+            await websocket.send_text(json.dumps({"type": "error", "error": str(exc)}))
 
     try:
         while True:
@@ -90,13 +110,28 @@ async def audio_pipeline(websocket: WebSocket) -> None:
                 await websocket.send_text(json.dumps({"type": "error", "error": "Missing audio payload"}))
                 continue
 
+            # Cancel any in-flight pipeline task (barge-in)
+            if active_task and not active_task.done():
+                active_task.cancel()
+                try:
+                    await active_task
+                except asyncio.CancelledError:
+                    pass
+
             await websocket.send_text(json.dumps({"type": "processing"}))
 
-            try:
-                audio_bytes = base64.b64decode(audio_b64)
-                async for event in pipeline_service.process_audio_stream(audio_bytes, mime_type):
-                    await websocket.send_text(json.dumps(event))
-            except Exception as exc:  # noqa: BLE001
-                await websocket.send_text(json.dumps({"type": "error", "error": str(exc)}))
+            audio_bytes = base64.b64decode(audio_b64)
+            active_task = asyncio.create_task(_run_pipeline(audio_bytes, mime_type))
     except WebSocketDisconnect:
+        if active_task and not active_task.done():
+            active_task.cancel()
         return
+
+
+# TODO: re-enable once pipeline_ws module is created
+# @app.websocket("/ws/streaming-pipeline")
+# async def streaming_pipeline(websocket: WebSocket) -> None:
+#     """Persistent streaming pipeline (Phase 3). Keeps pipes open to AI APIs."""
+#     ...
+
+
