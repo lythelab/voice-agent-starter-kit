@@ -51,6 +51,8 @@ static/
 	index.html               # Main browser demo
 	index_ws.html            # Alternate/demo websocket page
 requirements.txt
+Dockerfile
+docker-compose.yml
 ```
 
 ## Quickstart
@@ -81,6 +83,16 @@ pip install -r requirements.txt
 
 Create a local .env file from .env.example and fill in your keys:
 
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
 - DAILY_API_KEY
 - DAILY_DOMAIN
 - DAILY_ROOM_NAME
@@ -97,6 +109,39 @@ uvicorn app.main:app --reload
 ```
 
 Open http://127.0.0.1:8000 in your browser.
+
+## Docker Deployment
+
+### Build and run with Docker
+
+1. Ensure `.env` exists at the repository root (see Configure environment above).
+2. Build the image:
+
+```bash
+docker build -t voice-agent-starter-kit:latest .
+```
+
+3. Run the container:
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env voice-agent-starter-kit:latest
+```
+
+Open http://127.0.0.1:8000.
+
+### Run with Docker Compose
+
+```bash
+docker compose up --build -d
+```
+
+To stop:
+
+```bash
+docker compose down
+```
+
+The service listens on container port 8000 and is mapped to host port 8000.
 
 ## API and Transport
 

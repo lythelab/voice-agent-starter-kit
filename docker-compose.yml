@@ -1,0 +1,10 @@
+services:
+  voice-agent:
+    build:
+      context: .
+    image: voice-agent-starter-kit:latest
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
