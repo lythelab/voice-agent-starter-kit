@@ -130,8 +130,6 @@ class LLMAdapter:
         client = _get_client()
         tool_calls_buffer: dict[int, dict] = {}
         content_parts: list[str] = []
-        
-        self._filler_fired = False
 
         async with client.stream("POST", url, headers=headers, json=body, timeout=45.0) as response:
             if response.status_code >= 400:
@@ -155,12 +153,6 @@ class LLMAdapter:
                 # --- Accumulate streamed tool-call fragments ---
                 if "tool_calls" in delta:
                     print(f"[DEBUG] Received tool_call delta: {delta['tool_calls']}")
-                    
-                    if not getattr(self, "_filler_fired", False):
-                        from app.audio_playback.fillers import play_random_filler
-                        print("[DEBUG] Firing filler audio!")
-                        play_random_filler()
-                        self._filler_fired = True
 
                     for tc in delta["tool_calls"]:
                         idx = tc.get("index", 0)
@@ -237,7 +229,7 @@ class TTSAdapter:
             "let's see", "you know", "kind of", "sort of", "right"
         ]
         # Percentage chance of adding a filler word/sentence (0-100)
-        self.filler_probability = 15  # 15% chance
+        self.filler_probability = max(0, min(100, settings.tts_filler_probability))
 
     async def synthesize(self, text: str) -> tuple[str, str] | None:
         if not text:

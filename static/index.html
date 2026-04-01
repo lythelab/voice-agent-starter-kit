@@ -354,9 +354,22 @@
       let vadDetectedSpeech = false;
 
       const VAD_POLL_MS = 100;
-      const VAD_SILENCE_MS = 500;
+      const VAD_SILENCE_MS = 350;
       const VAD_MAX_RECORDING_MS = 15000;
       const VAD_RMS_THRESHOLD = 0.02;
+
+      function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = String(reader.result || "");
+            const commaIdx = result.indexOf(",");
+            resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result);
+          };
+          reader.onerror = () => reject(new Error("Failed to encode audio blob"));
+          reader.readAsDataURL(blob);
+        });
+      }
 
       function setConnectionState(label, tone = "warn") {
         connectionState.dataset.tone = tone;
@@ -702,13 +715,7 @@
             }
 
             const blob = new Blob(micChunks, { type: "audio/webm" });
-            const buffer = await blob.arrayBuffer();
-            const bytes = new Uint8Array(buffer);
-            let binary = "";
-            for (let i = 0; i < bytes.length; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            const audio_b64 = btoa(binary);
+            const audio_b64 = await blobToBase64(blob);
 
             if (!ws || ws.readyState !== WebSocket.OPEN) {
               stopMicStream();

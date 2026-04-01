@@ -30,6 +30,13 @@ class Settings:
     cartesia_sample_rate: int = int(os.getenv("CARTESIA_SAMPLE_RATE", "24000"))
     cartesia_output_format: str = os.getenv("CARTESIA_OUTPUT_FORMAT", "wav")
     cartesia_speed: float = float(os.getenv("CARTESIA_SPEED", "1.0"))
+    tts_filler_probability: int = int(os.getenv("TTS_FILLER_PROBABILITY", "0"))
+    enable_prefill_audio_filler: bool = os.getenv("ENABLE_PREFILL_AUDIO_FILLER", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 settings = Settings()

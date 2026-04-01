@@ -4,6 +4,7 @@ import re
 from time import perf_counter
 from typing import AsyncIterator
 
+from app.config import settings
 from app.pipeline.adapters import ASRAdapter, LLMAdapter, TTSAdapter
 from app.pipeline.conversation import ConversationManager
 from app.telemetry import latency_store
@@ -29,16 +30,14 @@ class AudioPipelineService:
         yield {"type": "transcript", "transcript": transcript}
 
         self.conversation.add_user_message(transcript)
-        yield {"type": "transcript", "transcript": transcript}
 
         # --- Early latency-masking filler ---
         import random
-        # 50% chance to say a filler word while the LLM thinks
         ttfa_ms = None
         tts_ms = 0.0
         chunk_index = 0
 
-        if True:
+        if settings.enable_prefill_audio_filler:
             filler = random.choice(["Hmm...", "Let's see...", "Umm...", "Well..."])
             filler_tts_start = perf_counter()
             filler_result = await self.tts.synthesize(filler)
