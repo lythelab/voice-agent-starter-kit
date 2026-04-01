@@ -153,6 +153,7 @@ class LLMAdapter:
                 # --- Accumulate streamed tool-call fragments ---
                 if "tool_calls" in delta:
                     print(f"[DEBUG] Received tool_call delta: {delta['tool_calls']}")
+
                     for tc in delta["tool_calls"]:
                         idx = tc.get("index", 0)
                         if idx not in tool_calls_buffer:
@@ -228,7 +229,7 @@ class TTSAdapter:
             "let's see", "you know", "kind of", "sort of", "right"
         ]
         # Percentage chance of adding a filler word/sentence (0-100)
-        self.filler_probability = 15  # 15% chance
+        self.filler_probability = max(0, min(100, settings.tts_filler_probability))
 
     async def synthesize(self, text: str) -> tuple[str, str] | None:
         if not text:
