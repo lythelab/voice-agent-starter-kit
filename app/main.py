@@ -16,7 +16,6 @@ if __package__ in (None, ""):
 
 from app.config import settings
 from app.pipeline import AudioPipelineService
-# from app.pipeline_ws.service_ws import StreamingAudioPipeline  # TODO: create this module
 from app.telemetry import latency_store
 from app.transport.daily import create_meeting_token
 
@@ -62,11 +61,6 @@ async def transport_token(payload: TokenRequest) -> dict[str, str]:
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(static_dir / "index.html")
-
-
-# @app.get("/streaming")  # TODO: re-enable once pipeline_ws module exists
-# async def streaming_index() -> FileResponse:
-#     return FileResponse(static_dir / "index_ws.html")
 
 
 @app.websocket("/ws/audio-pipeline")
@@ -126,12 +120,5 @@ async def audio_pipeline(websocket: WebSocket) -> None:
         if active_task and not active_task.done():
             active_task.cancel()
         return
-
-
-# TODO: re-enable once pipeline_ws module is created
-# @app.websocket("/ws/streaming-pipeline")
-# async def streaming_pipeline(websocket: WebSocket) -> None:
-#     """Persistent streaming pipeline (Phase 3). Keeps pipes open to AI APIs."""
-#     ...
 
 
