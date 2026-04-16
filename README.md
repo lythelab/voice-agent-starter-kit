@@ -1,6 +1,5 @@
 # Voice Agent Starter Kit
 
-<!-- Organization Logo Placeholder -->
 <p align="center">
 	<img width="100" height="100" alt="image" src="https://github.com/user-attachments/assets/ab1c911c-2476-41f2-8d20-e8b53aa26dfe" />
 </p>
@@ -36,6 +35,7 @@ It is designed as a practical foundation you can adapt for product prototypes an
 ## Repository Structure
 
 ```text
+main.py                  # Root launcher that imports app.main
 app/
 	main.py                  # FastAPI app and websocket route
 	config.py                # Environment-driven settings
@@ -60,7 +60,7 @@ docker-compose.yml
 ### 1. Clone and install
 
 ```bash
-git clone <your-fork-or-repo-url>
+git clone https://github.com/lythelab/voice-agent-starter-kit
 cd voice-agent-starter-kit
 python -m venv .venv
 ```
@@ -158,6 +158,7 @@ The websocket emits event types such as:
 - assistant_text_delta
 - assistant_audio_chunk
 - pipeline_result
+- info
 - error
 
 ## Environment Variables
@@ -167,6 +168,8 @@ See .env.example for the full list. Key ones include:
 - APP_HOST, APP_PORT
 - SYSTEM_PROMPT
 - CARTESIA_* output settings
+- TTS_FILLER_PROBABILITY
+- ENABLE_PREFILL_AUDIO_FILLER
 
 ## Security Notes
 
